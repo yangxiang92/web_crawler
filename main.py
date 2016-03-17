@@ -55,126 +55,151 @@ class FileSaver(object):
         self._path_prefix = path_prefix;
 
 # ===============================================================
+# 获取URL内容
+# ===============================================================
+def getUrl(url):
+    req = request.Request(url);
+    req.add_header('User-Agent', config.configs['browser_symbol']);
+    with request.urlopen(req) as f:
+        return f.read();
+
+# ===============================================================
 # 获取HTML
 # ===============================================================
 def getHTML(url):
-    html_doc = request.urlopen(url).read();
+    html_doc = getUrl(url);
     return html_doc;
 
 # ===============================================================
 # 下载图像，同时将HTML中的路径替换成本地路径
 # ===============================================================
-def downloadImage(url, content, file_saver):
-    # 解析HTML
-    soup = BeautifulSoup(content, config.configs['bs4_parser']);
+def downloadImage(url, soup, file_saver):
     # 获取img的标签，也就是包含图片的标签
     imgs = soup.findAll('img');
     for img in imgs:
         logging.info(img);
-        try:
-            # 防止img标签不存在‘src’属性
-            logging.info(img['src']);
-        except KeyError:
-            continue;
         match_flag = 0;
-        matches = re.match(r'^(http|https)://(.*\.)(jpg|png|gif)', str(img['src']))
-         # 图片是外部链接
-        if matches is not None:
-            logging.info('Image: Match outer link.')
-            imgUrl = img['src'];
-            imgPath = './images/' + matches.group(2) + matches.group(3);
-            match_flag = 1;
-        else:
-            matches = re.match(r'^/(.*\.)(jpg|png|gif)', img['src']);
-            # 图片是本站资源
+        # 既有‘src’又有‘original’属性的，一定是延迟加载的
+        # 对于延迟加载的，需要去下载‘original’所指向的图片，
+        # 然后再把‘src’指向所下载下来的图片
+        if img.has_attr('src') and img.has_attr('original'):
+            logging.info('Lazy load image.');
+            # 对original进行正则匹配，看是否符合图片文件的规律
+            matches = re.match((r'^(http://|https://|/)(.*\.)(%s)' % config.configs['picture_formats']), img['original']);
+            # 匹配上了
             if matches is not None:
-                logging.info('Image: Match local resouce.')
-                imgUrl = url + img['src'];
-                imgPath = './images/local' + matches.group(2) + matches.group(3);
+                # 链接是外部链接
+                if re.match(r'^(http|https)', matches.group(1)):
+                    logging.info('Image: Matches outer link.');
+                    # 下载文件的url就是original
+                    imgUrl = img['original'];
+                # 链接是内部路径
+                elif re.match(r'^/', matches.group(1)):
+                    logging.info('Image: Matches local resouce');
+                    # 需要将url添加到路径前面
+                    imgUrl = url + img['original'];
+                # 修改original属性，指向图片的位置
+                img['original'] = './images/' + matches.group(2) + matches.group(3);
                 match_flag = 1;
-        # 检测到有图片时，就需要将图片下载下来，并修改相应的的HTML文件内容
+        elif img.has_attr('src'):
+            logging.info('Normal image.');
+            # 对src进行正则匹配
+            matches = re.match((r'^(http://|https://|/)(.*\.)(%s)' % config.configs['picture_formats']), img['src']);
+            # 匹配上了
+            if matches is not None:
+                # 若匹配的是外部链接
+                if re.match(r'^(http|https)', matches.group(1)):
+                    logging.info('Image: Matches outer link.');
+                    imgUrl = img['src'];
+                # 若匹配的是内部路径
+                elif re.match(r'^/', matches.group(1)):
+                    logging.info('Image: Matches local resouce');
+                    imgUrl = url + img['src'];
+                match_flag = 1;
+
         if match_flag == 1:
-            # 获取并保存图片文件
-            imgContent = request.urlopen(imgUrl).read();
+            # 获取图片所在地址内容
+            imgContent = getUrl(imgUrl);
+            # 保存图片
+            imgPath = './images/' + matches.group(2) + matches.group(3);
             file_saver.saveFile(imgPath, imgContent);
-            # 修改html内容
-            content = content.replace(img['src'].encode('utf-8'), imgPath.encode('utf-8'));
-    return content;
+            # 修改src属性
+            img['src'] = imgPath;
+
+    return soup;
+
 
 # ===============================================================
 # 下载CSS，同时将HTML中的路径替换成本地路径
 # ===============================================================
-def downloadCss(url, content, file_saver):
-    # 解析HTML
-    soup = BeautifulSoup(content, config.configs['bs4_parser']);
+def downloadCss(url, soup, file_saver):
     # 找到所有css文件所在的标签
     csss = soup.findAll('link', attrs={'type':'text/css'});
     for css in csss:
         logging.info(css);
-        try:
-            # 防止css文件不存在外链的属性
-            logging.info(css['href']);
-        except KeyError:
-            continue;
-        match_flag = 0;
-        # CSS是外部链接资源（没看到主页上有除了这种之外的CSS资源。。。）
-        if re.match(r'^(http|https)://.*\.css$', str(css['href'])):
-            logging.info('CSS: Match outer link.');
-            cssStr = re.split(r'://', css['href']);
-            cssUrl = css['href'];
-            cssPath = './css/' + cssStr[1];
-            match_flag = 1;
-        if match_flag == 1:
-            # 获取CSS文件并保存
-            cssContent = request.urlopen(cssUrl).read();
-            file_saver.saveFile(cssPath, cssContent);
-            # 修改HTML中的CSS文件所指向的内容
-            content = content.replace(css['href'].encode('utf-8'), cssPath.encode('utf-8'));
-    return content;
+        # 不知道css里面的地址是不是都是以href属性形式存在的
+        # 但至少在m.sohu.com上都是这样的
+        if css.has_attr('href'):
+            logging.info('Got CSS.');
+            # 匹配是否是CSS后缀文件
+            matches = re.match(r'^(http://|https://|/)(.*\.)(css)', css['href']);
+            if matches is not None:
+                # CSS文件为外部链接
+                if re.match(r'^(http|https)', matches.group(1)):
+                    logging.info('CSS: Matches outer link');
+                    cssUrl = css['href'];
+                # CSS文件为内部路径
+                elif re.match(r'^/', matches.group(1)):
+                    logging.info('CSS: Matches local resouce');
+                    cssUrl = url + css['href'];
+                # 获取CSS文件
+                cssContent = getUrl(cssUrl);
+                # 保存CSS文件
+                cssPath = './css/' + matches.group(2) + matches.group(3);
+                file_saver.saveFile(cssPath, cssContent);
+                # 改变CSS所指路径为本机路径
+                css['href'] = cssPath;
+
+    return soup;
 
 # ===============================================================
 # 下载JS，同时将HTML中的路径替换成本地路径
 # ===============================================================
-def downloadJavaScript(url, content, file_saver):
-    # 解析HTML
-    soup = BeautifulSoup(content, config.configs['bs4_parser']);
+def downloadJavaScript(url, soup, file_saver):
     # 找到所有JavaScript所在的标签
     jss = soup.findAll('script', attrs={'type':'text/javascript'});
     for js in jss:
         logging.info(js);
-        try:
-            # 防止不存在‘src’属性
-            logging.info(js['src']);
-        except KeyError:
-            continue;
-        match_flag = 0;
-        # CSS是外部链接文件
-        if re.match(r'^(http|https)://.*\.js$', str(js['src'])):
-            logging.info('JS: Match outer link.');
-            jsStr = re.split(r'://', js['src']);
-            jsUrl = js['src'];
-            jsPath = './js/' + jsStr[1];
-            match_flag = 1;
-        # CSS是本地服务器资源
-        if re.match(r'^/.*\.js$', str(js['src'])):
-            logging.info('JS: Match local resource');
-            jsUrl = url + js['src'];
-            jsPath = './js/local' + js['src'];
-            match_flag = 1;
-        if match_flag == 1:
-            # 获取并保存CSS
-            jsContent = request.urlopen(jsUrl).read();
-            file_saver.saveFile(jsPath, jsContent);
-            # 修改HTML中CSS所指向的内容
-            content = content.replace(js['src'].encode('utf-8'), jsPath.encode('utf-8'));
-    return content;
+        # 必须有src属性才是指向javascript源文件的内容
+        if js.has_attr('src'):
+            logging.info('Got JS.');
+            # 匹配javascript文件
+            matches = re.match(r'^(http://|https://|/)(.*\.)(js)', js['src']);
+            if matches is not None:
+                # 匹配到外部链接
+                if re.match(r'^(http|https)', matches.group(1)):
+                    logging.info('JS: Matches outer link');
+                    jsUrl = js['src'];
+                # 匹配到本地路径
+                elif re.match(r'^/', matches.group(1)):
+                    logging.info('JS: Matches local resouce');
+                    jsUrl = url + js['src'];
+                # 获取javascript内容
+                jsContent = getUrl(jsUrl);
+                # 保存javascript
+                jsPath = './js/' + matches.group(2) + matches.group(3);
+                file_saver.saveFile(jsPath, jsContent);
+                # 将所指向的路径改为本机路径
+                js['src'] = jsPath;
+
+    return soup;
 
 # ===============================================================
 # 将超链接进行转换，以使得在本地打开的时候可以正常访问
 # ===============================================================
 def convertHyperLink(url, content):
-    content = content.replace(r'href="/'.encode('utf-8'), (r'href="'+url+r'/').encode('utf-8'));
-    content = content.replace(r'href="#"'.encode('utf-8'), (r'href="'+url+r'/#"').encode('utf-8'));
+    content = content.replace(r'href="/', (r'href="'+url+r'/'));
+    content = content.replace(r'href="#"', (r'href="'+url+r'/#"'));
     return content;
 
 # ===============================================================
@@ -227,15 +252,15 @@ def saveWebPage(url, path):
     print('Backup at Time Tag %s starts.' % time_tag);
     sys.stdout.flush();
     # 获取HTML
-    html_content = getHTML(url);
+    soup = BeautifulSoup(getHTML(url), config.configs['bs4_parser']);
     # 下载图片并修改HTML
-    html_content = downloadImage(url, html_content, file_saver);
+    soup = downloadImage(url, soup, file_saver);
     # 下载CSS并修改HTML
-    html_content = downloadCss(url, html_content, file_saver);
+    soup = downloadCss(url, soup, file_saver);
     # 下载JS并修改HTML
-    html_content = downloadJavaScript(url, html_content, file_saver);
+    soup = downloadJavaScript(url, soup, file_saver);
     # 修改HTML中的指向本地服务器的超链接
-    html_content = convertHyperLink(url, html_content);
+    html_content = convertHyperLink(url, soup.prettify());
     file_saver.saveFile('index.html', html_content);
     # 输出备份完成的提示
     print('Backup at Time Tag %s is saved.' % time_tag);
