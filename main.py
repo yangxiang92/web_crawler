@@ -14,9 +14,9 @@ import threading
 
 # 如果是Windows的话，需要稍微修改一下输出的默认编码，不然可能会有不能显示的字符的情况
 if config.configs['platform'] == 'Windows':
-    import io,sys
+    import io
     #改变标准输出的默认编码
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer,encoding='gb18030') 
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer,encoding='gb18030')
 
 # ===============================================================
 # 专门用于保存文件的类，用于处理麻烦的路径问题
