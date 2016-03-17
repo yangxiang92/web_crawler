@@ -10,7 +10,7 @@ import logging
 import config
 from datetime import datetime
 import sys,getopt
-import sched,time,threading
+import threading
 
 # 如果是Windows的话，需要稍微修改一下输出的默认编码，不然可能会有不能显示的字符的情况
 if config.configs['platform'] == 'Windows':
@@ -38,8 +38,6 @@ class FileSaver(object):
                 f.write(content.encode('utf-8'));
 
         logging.info('File %s saved' % (path+'/'+pathes[1]));
-        print('File %s saved' % (path+'/'+pathes[1]));
-        sys.stdout.flush();
 
     def setSavePath(self, path_prefix):
         self._path_prefix = path_prefix;
@@ -141,17 +139,17 @@ def convertHyperLink(url, content):
 
 # 获取当前时间戳，用以设置保存的目录
 def getTimeTag():
-    return datetime.now().strftime('%Y%m%d%H%M%S');
+    return datetime.now().strftime('%Y%m%d%H%M');
 
 # 获取命令行输入的参数
 def getOpt():
-    opts,args = getopt.getopt(sys.argv[1:], "d:u:o");
+    opts,args = getopt.getopt(sys.argv[1:], "d:u:o:");
     period  = config.configs['default_period'];
-    url = '';
-    store_path = ['default_folder'];
+    url = config.configs['default_url'];
+    store_path = config.configs['default_folder'];
 
     for op,value in opts:
-        if op == '-h':
+        if op == '-d':
             period = int(value);
         elif op == '-u':
             url = value;
@@ -161,8 +159,8 @@ def getOpt():
             print("Plese input the right parameters.");
             sys.exit();
 
-    if len(url) == 0:
-        print("Please input URL.")
+    if re.match(r'(http|https)://.*', url) is None:
+        print("Please input a correct URL.(by using -u option)")
         sys.exit();
 
     return period, url, store_path;
@@ -193,7 +191,7 @@ def periodTask(period, url, path):
     saveWebPage(url, path);
 
 def runPeriodTask(period, url, path):
-    timer = threading.Timer(period, periodTask, (period, url, path));
+    timer = threading.Timer(period, runPeriodTask, (period, url, path));
     timer.start();
     saveWebPage(url, path);
 

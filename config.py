@@ -1,6 +1,7 @@
 configs={
     'platform':'Windows',
-    'soup_parser':'html.parser',
+    'bs4_parser':'html.parser',
     'default_folder':'.',
-    'default_period':60
+    'default_period':60,
+    'default_url':'http://m.sohu.com'
 }
